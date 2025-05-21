@@ -1,6 +1,7 @@
 import Vue from 'vue';
 import VueRouter from 'vue-router';
 import MindMapPage from '../pages/mind-map/index.vue'; // 导入我们刚创建的页面组件
+import GenerateStepPage from '../pages/generate-step/index.vue'; // 导入我们刚创建的页面组件
 
 Vue.use(VueRouter);
 
@@ -9,6 +10,11 @@ const routes = [
     path: '/mind-map',
     name: 'MindMapPage',
     component: MindMapPage
+  },
+  {
+    path: '/generate-step',
+    name: 'GenerateStepPage',
+    component: GenerateStepPage
   },
   {
     path: '/', // 将根路径重定向到 /mind-map

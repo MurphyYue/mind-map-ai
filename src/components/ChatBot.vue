@@ -82,7 +82,7 @@ class RetriableError extends Error {
 export default {
   name: "ChatBot",
   props: {
-    initialData: {
+    editingNodeData: {
       type: Object,
       default: () => ({}),
     },
@@ -96,10 +96,11 @@ export default {
       lastAiMessage: null,
       currentAbortController: null, // 用于中止正在进行的 fetch 请求
       conversationId: null, // Add this line to store conversation_id
+      pendingContextForUserInput: null, // 新增：存储待处理的上下文
     };
   },
   watch: {
-    initialData: {
+    editingNodeData: {
       handler(newVal) {
         if (newVal && Object.keys(newVal).length > 0) {
           this.handleExternalData(newVal);
@@ -111,24 +112,17 @@ export default {
   },
   mounted() {
     this.adjustTextareaHeight();
-    if (this.initialData && Object.keys(this.initialData).length > 0) {
-      this.handleExternalData(this.initialData);
-    }
   },
   methods: {
     handleExternalData(data) {
       if (this.isProcessing && this.currentAbortController) {
         this.currentAbortController.abort();
+        // 注意：如果中止逻辑复杂，可能需要确保 isProcessing 等状态正确重置
       }
-      if (data.type === "question") {
-        this.addMessage(data.content, true);
-        this.getAiResponse(data.content);
-      } else if (data.type === "conversation") {
-        this.messages = (data.messages || []).map((m) => ({
-          ...m,
-          id: m.id || this.generateMessageId(m.isUser),
-        }));
-        this.updateLastMessages();
+      if (data.id && data.topic) {
+        this.pendingContextForUserInput = data.topic;
+        // 清除用户输入框，或给出提示表明上下文已设置
+        this.userInput = "";
       }
     },
 
@@ -139,24 +133,54 @@ export default {
     },
 
     sendMessage() {
-      const messageContent = this.userInput.trim();
-      if (!messageContent || this.isProcessing) return;
-
-      this.addMessage(messageContent, true);
-      this.userInput = "";
+      const userTypedContent = this.userInput.trim();
+      
+      if (!userTypedContent) {
+        // 如果有待处理上下文，但用户未输入，可以考虑是否提示用户输入指令
+        // 或者，如果允许仅基于上下文进行操作（例如，用户清空输入框并发送以触发默认操作）
+        // 目前，我们要求用户必须输入内容
+        return;
+      }
+      
+      if (this.isProcessing) return;
+      
+      let messageObjectForDisplay;
+      let contentForAI;
+      let messageType = 'user'; // 默认为普通用户消息
+      
+      if (this.pendingContextForUserInput) {
+        messageObjectForDisplay = {
+          context: this.pendingContextForUserInput, // 原始文本
+          userInput: userTypedContent,             // 用户的修改指令
+        };
+        // 为AI构造一个更明确的提示
+        contentForAI = `请根据以下指令修改提供的文本。\n原始文本: "${this.pendingContextForUserInput}"\n用户指令: "${userTypedContent}"`;
+        messageType = 'user_input_with_context'; // 特殊消息类型
+        this.pendingContextForUserInput = null; // 使用后清除
+      } else {
+        messageObjectForDisplay = userTypedContent;
+        contentForAI = userTypedContent;
+      }
+      
+      this.addMessage(messageObjectForDisplay, true, null, messageType);
+      this.userInput = ""; // 清空输入框
       this.adjustTextareaHeight();
-      this.getAiResponse(messageContent);
+      this.getAiResponse(contentForAI);
     },
 
-    addMessage(content, isUser = false, id = null) {
+    addMessage(content, isUser = false, id = null, type = null) {
       const messageId = id || this.generateMessageId(isUser);
+      // 如果未提供类型，则根据 isUser 默认设置
+      const messageTypeToAdd = type || (isUser ? 'user' : 'ai');
+      
       this.messages.push({
         id: messageId,
-        content,
+        content, // content 现在可以是字符串或对象
         isUser,
         timestamp: new Date().getTime(),
+        type: messageTypeToAdd, // 存储消息类型
       });
-
+      
       this.updateLastMessages();
       this.$nextTick(() => {
         this.scrollToBottom();
@@ -266,11 +290,9 @@ export default {
               // Attempt to parse msg.data if it's expected to be JSON
               // This part is highly dependent on the actual API's streaming format
               const parsedData = JSON.parse(msg.data);
-              console.log("Parsed data:", parsedData);
               if (parsedData.data && typeof parsedData.data === "object" && parsedData.data.conversation_id) {
                 // we need to store conversation_id here with parsedData.data.conversation_id
                 this.conversationId = parsedData.data.conversation_id; // Store conversation_id
-                console.log("Stored conversation_id:", this.conversationId);
               }
               if (typeof parsedData === "object" && parsedData !== null && typeof parsedData.content === "string") {
                 textChunk = parsedData.content;
@@ -278,7 +300,18 @@ export default {
             } catch (e) {
               textChunk = msg.data; // If JSON.parse fails, assume msg.data is plain text
             }
+
+            // 新增：移除 textChunk 两端的双引号
+            console.log(textChunk)
+            if (typeof textChunk === 'string' && textChunk.length >= 2 && textChunk.startsWith('"') && textChunk.endsWith('"')) {
+              textChunk = textChunk.substring(1, textChunk.length - 1);
+            }
+            if (textChunk === '"') {
+              return;   
+            }
+
             currentAiMsg.content += textChunk;
+            // console.log(currentAiMsg.content)
             this.scrollToBottom();
           },
           onclose: () => {
@@ -372,7 +405,6 @@ export default {
       }
     },
 
-    // ... existing code ...
     regenerateResponse() {
       if (!this.lastUserMessage) return;
       // If already processing, abort current and start new one
@@ -398,8 +430,8 @@ export default {
         this.messages = this.messages.filter((m) => m.isUser);
       }
       this.lastAiMessage = null; // Clear last AI message reference
-
-      this.getAiResponse(this.lastUserMessage.content);
+      const contentForAI = `请根据以下指令重新修改提供的文本。\n原始文本: "${this.lastUserMessage.content.context}"\n用户指令: "${this.lastUserMessage.content.userInput}"`;
+      this.getAiResponse(contentForAI);
     },
 
     syncToMindMap() {
@@ -407,11 +439,9 @@ export default {
         console.warn("No valid AI message content to sync.");
         return;
       }
-
       this.$emit("sync-to-mindmap", {
-        aiMessage: this.lastAiMessage.content,
-        userMessage: this.lastUserMessage ? this.lastUserMessage.content : "",
-        timestamp: new Date().getTime(),
+        content: this.lastAiMessage.content,
+        id: this.editingNodeData.id,
       });
     },
 
@@ -429,21 +459,45 @@ export default {
     },
 
     formatMessage(content) {
-      if (content === null || typeof content === "undefined") return "";
-      let textContent = String(content);
+      // 处理 user_input_with_context 类型的消息
+      if (typeof content === 'object' && content !== null && typeof content.context === 'string' && typeof content.userInput === 'string') {
+        const escapeHtml = (unsafe) => {
+          if (unsafe === null || typeof unsafe === 'undefined') return '';
+          return String(unsafe)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+        };
+        const contextHtml = `<div class="message-context-block" style="margin-bottom: 8px; padding: 8px; background-color: #e9ecef; border-radius: 4px; font-size: 0.9em;">` +
+                        `<strong style="color: #495057;">需要修改的内容:</strong><div style="margin-top: 4px;">${escapeHtml(content.context)}</div></div>`;
+        const userInputHtml = `<div class="message-user-instruction-block" style="font-size: 0.9em;">` +
+                          `<strong style="color: #495057;">您的修改指令:</strong><div style="margin-top: 4px;">${escapeHtml(content.userInput)}</div></div>`;
+        return contextHtml + userInputHtml;
+      }
 
-      // Basic HTML escaping
-      textContent = textContent
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
+      // 处理 null, undefined, 或纯空白字符串
+      if (content === null || typeof content === 'undefined' || String(content).trim() === '') {
+        return ''; // 对于空内容，直接返回空字符串
+      }
+
+      let textContent = String(content);
 
       const lines = textContent.split("\n");
       let htmlOutput = "";
       let listBuffer = [];
       let currentListType = null; // 'ul' for unordered, 'ol' for ordered
+
+      const escapeHtmlForContent = (text) => {
+        if (typeof text !== 'string') return '';
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      };
 
       const endCurrentList = () => {
         if (listBuffer.length > 0) {
@@ -456,33 +510,44 @@ export default {
         currentListType = null;
       };
 
-      for (const line of lines) {
-        const ulMatch = line.match(/^•\s*(.*)/);
-        const olMatch = line.match(/^\d+\.\s*(.*)/);
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // 支持更多无序列表标记: •, -, *
+        const ulMatch = line.match(/^[\s]*(?:•|-|\*)\s*(.*)/);
+        const olMatch = line.match(/^[\s]*\d+\.\s*(.*)/);
 
         if (ulMatch) {
           if (currentListType !== "ul") {
             endCurrentList();
             currentListType = "ul";
           }
-          listBuffer.push(`<li>${ulMatch[1]}</li>`);
+          listBuffer.push(`<li>${escapeHtmlForContent(ulMatch[1])}</li>`);
         } else if (olMatch) {
           if (currentListType !== "ol") {
             endCurrentList();
             currentListType = "ol";
           }
-          listBuffer.push(`<li>${olMatch[1]}</li>`);
+          listBuffer.push(`<li>${escapeHtmlForContent(olMatch[1])}</li>`);
         } else {
           endCurrentList();
-          htmlOutput += line + (line ? "<br>" : ""); // Add <br> only if line is not empty, to avoid double <br> for empty lines
+          if (line.trim() !== "") {
+            htmlOutput += escapeHtmlForContent(line) + "<br>";
+          } else {
+            // 处理空行，如果不是最后一行，则添加 <br> 以保留段落间隔
+            // 避免在内容末尾添加不必要的 <br>
+            if (i < lines.length - 1) {
+                 htmlOutput += "<br>";
+            }
+          }
         }
       }
-      endCurrentList(); // Ensure any pending list is flushed
+      endCurrentList(); 
 
-      // Remove last <br> if it's redundant
+      // 移除可能在末尾多余的 <br>
       if (htmlOutput.endsWith("<br>")) {
         htmlOutput = htmlOutput.substring(0, htmlOutput.length - 4);
       }
+      
       return htmlOutput;
     },
 
@@ -498,12 +563,33 @@ export default {
     adjustTextareaHeight() {
       const textarea = this.$refs.inputArea;
       if (textarea) {
-        textarea.style.height = "auto"; // Reset height
-        // Set a temporary max-height to prevent excessive growth during calculation
-        const maxHeight =
-          parseInt(window.getComputedStyle(textarea).maxHeight, 10) || 120;
-        textarea.style.height =
-          Math.min(textarea.scrollHeight, maxHeight) + "px";
+        textarea.style.height = "auto"; // Reset height to correctly calculate scrollHeight
+        
+        let maxHeight = 120; // Default max height in pixels
+        const computedStyle = window.getComputedStyle(textarea);
+        const computedMaxHeight = computedStyle.maxHeight;
+
+        if (computedMaxHeight && computedMaxHeight !== 'none') {
+          // Check if it's a pixel value
+          if (computedMaxHeight.endsWith('px')) {
+            const parsedMaxHeight = parseInt(computedMaxHeight, 10);
+            if (!isNaN(parsedMaxHeight) && parsedMaxHeight > 0) {
+              maxHeight = parsedMaxHeight;
+            }
+          }
+          // You could add handling for other units like 'em', 'rem' if necessary,
+          // converting them to pixels, but that's more complex.
+          // For now, we primarily rely on pixel values or the default.
+        }
+        
+        // Ensure scrollHeight is a valid number before using it
+        const scrollHeight = textarea.scrollHeight;
+        if (typeof scrollHeight === 'number' && !isNaN(scrollHeight)) {
+            textarea.style.height = Math.min(scrollHeight, maxHeight) + "px";
+        } else {
+            // Fallback if scrollHeight is not a number (should be rare)
+            textarea.style.height = Math.min(parseInt(computedStyle.lineHeight, 10) || 20, maxHeight) + "px";
+        }
       }
     },
   },
@@ -576,6 +662,7 @@ export default {
       justify-content: flex-end;
 
       .message-content {
+        text-align: left;
         background-color: #e1f5fe;
         border-radius: 18px 4px 18px 18px;
         margin-right: 12px;
@@ -586,6 +673,7 @@ export default {
       justify-content: flex-start;
 
       .message-content {
+        text-align: left;
         background-color: #f0f0f0;
         border-radius: 4px 18px 18px 18px;
         margin-left: 12px;
@@ -612,7 +700,7 @@ export default {
         content: "";
         width: 20px;
         height: 20px;
-        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2zm0 8h2v2h-2z'/%3E%3C/svg%3E");
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2zm0 8h2v2h-2zm0 8h2v2h-2z'/%3E%3C/svg%3E");
         background-size: contain;
       }
     }
