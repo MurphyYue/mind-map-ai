@@ -3,8 +3,8 @@
     <div class="mind-head">
       <div>{{ title }}</div>
       <div class="button-container">
-        <button @click="startEdit">AI智能修改</button>
-        <button @click="getMindData">保存脑图数据</button>
+        <div @click="startEdit" class="mind-btn">AI智能修改</div>
+        <div @click="getMindData" class="mind-btn">保存脑图数据</div>
       </div>
     </div>
     <div id="jsmind_container" style="width: 100%; height: 100%"></div>
@@ -200,8 +200,16 @@ export default {
     .button-container {
      display: flex;
      gap: 10px;
-     button {
+     .mind-btn {
       cursor: pointer;
+      padding: 5px 10px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      background-color: #f5f5f5;
+      transition: background-color 0.3s ease;
+      &:hover {
+        background-color: #e5e5e5;
+      }
      }
     }
   }
