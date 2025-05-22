@@ -86,12 +86,13 @@ export default {
         const selectedNode = this.jm.get_selected_node();
         if (!selectedNode) return;
         // 如果节点可新增子节点，则显示菜单
-        if (
-          selectedNode &&
-          (selectedNode.data.createAble || selectedNode.data.editable)
-        ) {
-          this.showContextMenu(x, y);
-        }
+        // if (
+        //   selectedNode &&
+        //   (selectedNode.data.createAble || selectedNode.data.editable)
+        // ) {
+        //   this.showContextMenu(x, y);
+        // }
+        this.showContextMenu(x, y);
       };
       // 点击空白处关闭菜单
       document.addEventListener("click", this.hideContextMenu);
@@ -122,17 +123,17 @@ export default {
       };
       menu.appendChild(addBtn);
       // 编辑节点按钮
-      const editBtn = document.createElement("div");
-      editBtn.innerText = "编辑节点";
-      editBtn.style.padding = "4px 16px";
-      editBtn.style.cursor = "pointer";
-      editBtn.onmouseenter = () => (editBtn.style.background = "#eee");
-      editBtn.onmouseleave = () => (editBtn.style.background = "");
-      editBtn.onclick = () => {
-        this.editNode();
-        this.hideContextMenu();
-      };
-      menu.appendChild(editBtn);
+      // const editBtn = document.createElement("div");
+      // editBtn.innerText = "编辑节点";
+      // editBtn.style.padding = "4px 16px";
+      // editBtn.style.cursor = "pointer";
+      // editBtn.onmouseenter = () => (editBtn.style.background = "#eee");
+      // editBtn.onmouseleave = () => (editBtn.style.background = "");
+      // editBtn.onclick = () => {
+      //   this.editNode();
+      //   this.hideContextMenu();
+      // };
+      // menu.appendChild(editBtn);
       document.body.appendChild(menu);
     },
     hideContextMenu() {
@@ -143,10 +144,10 @@ export default {
       const selected = this.jm.get_selected_node();
       console.log(selected);
       if (!selected) return;
-      if (!selected || !selected.data.createAble) {
-        alert("该节点不可新增子节点");
-        return;
-      }
+      // if (!selected || !selected.data.createAble) {
+      //   alert("该节点不可新增子节点");
+      //   return;
+      // }
       this.jm.enable_edit();
       // 弹窗输入新节点名称
       const topic = prompt("请输入新节点名称");
@@ -161,15 +162,15 @@ export default {
       const selected = this.jm.get_selected_node();
       console.log(selected);
       if (!selected) return;
-      if (!selected || !selected.data.editable) {
-        alert("该节点不可编辑");
-        return;
-      }
+      // if (!selected || !selected.data.editable) {
+      //   alert("该节点不可编辑");
+      //   return;
+      // }
       this.jm.enable_edit();
     },
     getMindData() {
       // 获取当前脑图全部数据，可用于传给后端
-      const data = this.jm.get_data("node_array");
+      const data = this.jm.get_data("node_tree");
       // 可直接传 data 到后端（如 axios.post(..., data)）
       console.log("当前脑图数据：", data);
     },
